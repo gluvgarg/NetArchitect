@@ -1,0 +1,31 @@
+{
+  "devices": [
+    {
+      "id": "c2960x",
+      "model": "Catalyst 2960-X",
+      "category": "Layer 2 Access Switch",
+      "ports": "24x 10/100/1000 + 4x 1G SFP",
+      "throughput_gbps": 50.0,
+      "recommended_layer": "Access Layer",
+      "features": ["IEEE 802.1Q", "Voice VLAN", "STP / RSTP"]
+    },
+    {
+      "id": "c3850",
+      "model": "Catalyst 3850",
+      "category": "Layer 3 Distribution / Core Switch",
+      "ports": "24x 10/100/1000 PoE+ with 4x 10G SFP+ Uplinks",
+      "throughput_gbps": 92.0,
+      "recommended_layer": "Distribution / Core Layer",
+      "features": ["Inter-VLAN Routing", "OSPF", "EIGRP", "StackWise-480"]
+    },
+    {
+      "id": "isr4331",
+      "model": "Cisco ISR 4331",
+      "category": "Edge / WAN Router",
+      "ports": "3x GE/SFP routed ports + 2x NIM slots",
+      "throughput_gbps": 0.3,
+      "recommended_layer": "Network Perimeter / WAN Edge",
+      "features": ["BGP", "OSPF", "IPSec VPN", "NAT/PAT", "ZBFW"]
+    }
+  ]
+}
