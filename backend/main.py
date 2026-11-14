@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from api.routes import api_router
 from engines.media_engine import PhysicalDistanceViolationError
+from engines.vlsm_engine import InsufficientAddressSpaceError
 
 app = FastAPI(
     title="NetArchitect API",
@@ -37,6 +38,23 @@ def physical_distance_violation_handler(request: Request, exc: PhysicalDistanceV
                 "distance_meters": exc.distance_meters,
                 "max_distance_meters": exc.max_distance_meters,
                 "attenuation_explanation": exc.attenuation_explanation,
+            }
+        },
+    )
+
+# Custom Exception Handler for VLSM Address Space Exhaustion
+@app.exception_handler(InsufficientAddressSpaceError)
+def insufficient_address_space_handler(request: Request, exc: InsufficientAddressSpaceError):
+    return JSONResponse(
+        status_code=400,
+        content={
+            "detail": {
+                "error_type": "InsufficientAddressSpaceError",
+                "message": exc.message,
+                "root_network": exc.root_network,
+                "total_root_addresses": exc.total_root_addresses,
+                "total_required_addresses": exc.total_required_addresses,
+                "deficit": exc.deficit,
             }
         },
     )

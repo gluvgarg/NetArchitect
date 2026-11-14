@@ -51,6 +51,71 @@ The Physical Media Recommendation Engine (`MediaEngine`) implements deterministi
   - At **10,001 m (ER)**: Estimated loss $6.50\text{ dB} \le 11.1\text{ dB}$ budget $\rightarrow$ `is_budget_sufficient: True` ($+4.60\text{ dB}$ margin).
   - At **40,000 m (ER)**: Estimated loss $14.00\text{ dB} > 11.1\text{ dB}$ budget $\rightarrow$ `is_budget_sufficient: False` ($-2.90\text{ dB}$ deficit under conservative assumptions; requires premium $\le 0.20\text{ dB/km}$ fiber or fusion splices).
 
+### VLSM & Subnetting Engine (Phase 4)
+
+The Variable Length Subnet Masking Engine (`VLSMEngine`) performs optimal, fragmentation-free hierarchical IPv4 address allocation under **RFC 1878** and **RFC 4632**:
+
+#### 1. Core Algorithmic Principles
+* **Descending Host-Count Sorting**: Requirements are sorted in descending order ($H_1 \ge H_2 \ge \dots \ge H_n$) prior to allocation. This guarantees that larger subnets with strict binary power-of-two boundaries are allocated first, preventing address space fragmentation and alignment collisions.
+* **Prefix Sizing Formula**: Finds the smallest host bit count $h \ge 2$ satisfying $2^h - 2 \ge H_{\text{required}}$, with prefix length $p = 32 - h$. Subnets reserve the first address as Network ID and the last address as Directed Broadcast.
+* **Mathematical Alignment & Zero Overlap**: Every subnet network address integer $N$ is strictly aligned to a multiple of its block size: $N \pmod{2^h} == 0$.
+* **Default Gateway Convention**: The **first usable host IP address** in each allocated subnet range is systematically designated as the default gateway.
+* **Contiguous Remaining Address Space**: Unallocated address space is summarized into minimal contiguous valid CIDR blocks via `ipaddress.summarize_address_range`.
+* **Address Space Exhaustion**: If requested subnets exceed root network capacity, raises `InsufficientAddressSpaceError` (HTTP 400).
+
+### Routing Decision Engine (Phase 5)
+
+The Routing Decision Engine (`RoutingEngine`) implements deterministic, standards-based routing architecture selection under **RFC 2328** (OSPF Version 2) and **RFC 4271** (Border Gateway Protocol 4):
+
+#### 1. Supported Architectures
+* **Single-Area OSPF (Area 0)**:
+  - Recommended for single Autonomous System (AS = 1), internal routing domains with fewer than 50 subnets.
+  - All interfaces reside in Area 0 (Backbone 0.0.0.0) and maintain identical Link-State Databases (LSDB).
+  - Every router independently executes Dijkstra's Shortest Path First (SPF) algorithm to calculate loop-free shortest paths based on interface cost.
+  - Minimal operational overhead: no Area Border Routers (ABRs) or inter-area summarization required.
+* **Multi-Area OSPF**:
+  - Recommended for single Autonomous System (AS = 1) networks where multiple internal areas are explicitly required.
+  - Implements a two-tier hierarchy centered around a mandatory Area 0 backbone.
+  - Area Border Routers (ABRs) maintain separate LSDBs for each attached area, inject Type 3 Summary LSAs into adjacent areas, and contain link flaps (SPF calculations are confined to the originating area).
+* **eBGP (External Border Gateway Protocol)**:
+  - Recommended whenever multiple Autonomous Systems are present ($AS > 1$) or an external AS routing boundary exists.
+  - Path-vector routing operating over TCP port 179; uses the `AS_PATH` attribute for loop prevention and administrative policy controls (Local Preference, MED, AS prepending).
+  - **Academic Principle**: eBGP does **NOT** replace internal routing protocols. An Interior Gateway Protocol (such as OSPF) is still strictly required within each AS to distribute internal subnets and resolve BGP recursive next-hop IP addresses.
+* **Design Review Diagnostics**:
+  - When topology inputs are contradictory (e.g. multiple ASes specified but `has_external_as_boundary=False`) or underspecified (e.g. $\ge 50$ subnets without explicit area partitioning), the engine returns a structured design review result rather than making unverified assumptions.
+
+#### 2. Deterministic Decision Precedence Hierarchy
+```
+1. Contradiction Check: If AS > 1 and has_external_as_boundary == False -> Design Review Required
+2. Rule 1 (Inter-AS / External Boundary Precedence): If AS > 1 or has_external_as_boundary == True -> eBGP
+3. Rule 2 (Multi-Area OSPF Precedence): If AS == 1 and ospf_areas_required > 1 -> Multi-Area OSPF
+4. Rule 3 (Single-Area OSPF Precedence): If AS == 1, subnets < 50, and areas in (None, 1) -> Single-Area OSPF (Area 0)
+5. Rule 4 (Scale Boundary Review): If AS == 1, subnets >= 50, and areas is None -> Design Review Required
+```
+
+#### 3. Standard Specifications vs. Operational Design Heuristics
+* **Standard-Defined Specifications**: RFC 2328 defines OSPFv2 protocol mechanics (LSDB flooding, Dijkstra's algorithm, Area 0 backbone, ABR Type 3 LSAs); RFC 4271 defines BGP-4 path-vector exchange and AS_PATH loop detection.
+* **Engineering Scalability Heuristics**: The **50-subnet threshold** is an operational guideline to prevent excessive Dijkstra SPF recalculation overhead and large LSDB memory footprints in flat single-area networks. RFC 2328 itself does not prescribe a rigid numerical limit.
+* **Multi-Site Networks**: Multi-site networks within a single Autonomous System do **not** automatically mandate BGP. Enterprise branch sites connected via private Metro Ethernet or dark fiber operate cleanly under an internal IGP (OSPF).
+
+### Configuration Generation Engine (Phase 6)
+
+The Configuration Generation Engine (`ConfigGenerator`) produces syntax-valid, modular Cisco IOS / IOS-XE configuration templates by compiling validated topologies and outputs from the Layer 1 Media, Layer 3 VLSM, and Routing Decision engines:
+
+#### 1. Supported Configuration Sections
+* **System Management & Security**: Hostname definition, domain-lookup suppression (`no ip domain-lookup`), high-resolution logging timestamps (`service timestamps log datetime msec`), and encrypted management lines (`transport input ssh`).
+* **VLAN Tagging (IEEE 802.1Q)**: Explicit VLAN instantiation in the VLAN database, access port assignments (`switchport mode access`, `switchport access vlan <id>`), dot1q trunking (`switchport mode trunk`), and restricted allowed VLAN lists (`switchport trunk allowed vlan <list>`).
+* **Layer 3 Interface Addressing**: IP address and dotted-decimal subnet mask assignment on physical routed ports, sub-interfaces, and Management Switch Virtual Interfaces (SVI / `interface Vlan1`). Default gateway definition for Layer 2 switches (`ip default-gateway`).
+* **Single-Area OSPF**: OSPF process initialization, static 32-bit Router ID (`router-id`), adjacency logging, passive interface restrictions, and Area 0 network statements (RFC 2328).
+* **Multi-Area OSPF**: Hierarchical area definitions with Area 0 as the mandatory backbone, non-backbone area statements, and Area Border Router (ABR) boundary configuration.
+* **eBGP Peering**: Inter-Autonomous System path-vector configuration (`router bgp <asn>`), static BGP router ID, verified neighbor statements (`neighbor <ip> remote-as <remote_as>`), neighbor descriptions, and explicit network prefix masks (RFC 4271).
+
+#### 2. Validation & Safety Enforcement
+* **Zero Credential Exposure**: Strictly disallows plaintext passwords, secrets, or privileged keys in inputs and generated configuration files.
+* **Integrity Validation**: Detects duplicate interface names, duplicate VLAN IDs, assignments to undeclared VLANs, non-zero areas under Single-Area OSPF, and missing/invalid BGP neighbors.
+* **Academic Simulation Notice**: Explicitly banners that configurations are synthesized simulation templates requiring human administrator review prior to physical hardware deployment.
+* **Secure Artifact Export**: Automatically writes verified `.cfg` and `.txt` files to `backend/exports/` using sanitized hostnames and strict path-traversal prevention. Available for download via `GET /api/v1/configs/{config_id}/download`.
+
 ---
 
 ## 2. Project Directory Structure
@@ -245,8 +310,8 @@ npm run build
 ---
 
 ## 5. Next Phase Roadmap
-- **Phase 2**: Implement deterministic Layer 1 Media Selection logic in `engines/media_engine.py`.
-- **Phase 3**: Implement VLSM calculation algorithm with subnet partitioning in `engines/vlsm_engine.py`.
-- **Phase 4**: Implement routing protocol heuristics (OSPF Area design vs BGP peering) in `engines/routing_engine.py`.
-- **Phase 5**: Implement Cisco IOS configuration generator in `engines/config_generator.py` and export scripts to `backend/exports/`.
-- **Phase 6**: Link explainability logs to interactive frontend views for academic demonstration.
+- **Phase 3**: Physical Transmission Media Recommendation Engine (`engines/media_engine.py`) — **COMPLETED**
+- **Phase 4**: VLSM & Hierarchical Subnetting Calculation Engine (`engines/vlsm_engine.py`) — **COMPLETED**
+- **Phase 5**: Routing Decision & Architecture Engine (`engines/routing_engine.py`) — **COMPLETED**
+- **Phase 6**: Cisco IOS Device Configuration Generator (`engines/config_generator.py`) — **COMPLETED**
+- **Phase 7**: Link explainability logs to interactive frontend views for academic demonstration.
